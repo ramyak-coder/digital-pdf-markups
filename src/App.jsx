@@ -2,5 +2,5 @@
 import PdfAnnotator from "./components/PdfAnnotator";
 
 export default function App() {
-  return <PdfAnnotator pdfUrl="/pdf/sample.pdf" />;
+  return <PdfAnnotator pdfUrl="./sample.pdf" />;
 }
