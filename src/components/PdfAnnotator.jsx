@@ -71,12 +71,6 @@ export default function PdfAnnotator({ pdfUrl }) {
             >
               Rect
             </button>
-            {/* <button
-              onClick={() => setTool("text")}
-              style={{ background: tool === "text" ? "#ddd" : "" }}
-            >
-              Text
-            </button> */}
             <button
               onClick={() => setTool("callout")}
               style={{ background: tool === "callout" ? "#ddd" : "" }}

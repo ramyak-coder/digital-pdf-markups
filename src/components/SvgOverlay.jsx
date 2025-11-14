@@ -67,16 +67,34 @@ export default function SvgOverlay({
       return;
     }
 
-    if (tool === "text") {
-      const id = crypto.randomUUID();
-      appendObject({ id, type: "text", x: p.x, y: p.y, text: "" });
-      return;
-    }
-
     if (tool === "callout") {
-      const id = crypto.randomUUID();
+      // Prevent duplicate callouts on clicking inside an existing one
+      const clickedInside = objects.some((o) => {
+        if (o.type !== "callout") return false;
+
+        // Bubble (foreignObject) hit test
+        const bx = o.boxX;
+        const by = o.boxY;
+        const bw = 180;
+        const bh = 60;
+        const insideBox =
+          p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + bh;
+
+        // Dot / anchor hit test
+        const dx = p.x - o.point.x;
+        const dy = p.y - o.point.y;
+        const insideDot = Math.sqrt(dx * dx + dy * dy) < 12;
+
+        return insideBox || insideDot;
+      });
+
+      if (clickedInside) {
+        return; // <-- prevents duplication
+      }
+
+      // Create a new callout only when clicking on empty space
       appendObject({
-        id,
+        id: crypto.randomUUID(),
         type: "callout",
         point: { x: p.x, y: p.y },
         boxX: p.x + 40,
@@ -180,28 +198,6 @@ export default function SvgOverlay({
       );
     }
 
-    if (o.type === "text") {
-      return (
-        <foreignObject key={o.id} x={o.x} y={o.y} width={200} height={60}>
-          <textarea
-            value={o.text}
-            onChange={(ev) => {
-              const val = ev.target.value;
-              onChangeObjects((prev) =>
-                prev.map((p) => (p.id === o.id ? { ...p, text: val } : p))
-              );
-            }}
-            style={{
-              width: "200px",
-              height: "60px",
-              fontSize: 14,
-              background: "rgba(255,255,255,0.95)",
-            }}
-          />
-        </foreignObject>
-      );
-    }
-
     if (o.type === "callout") {
       return (
         <g key={o.id}>
@@ -231,14 +227,14 @@ export default function SvgOverlay({
                 }}
               />
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <button
+                {/* <button
                   onClick={(ev) => {
                     ev.stopPropagation();
                     onRequestScanCallout?.(o);
                   }}
                 >
                   🔎
-                </button>
+                </button> */}
                 <button
                   onClick={(ev) => {
                     ev.stopPropagation();
