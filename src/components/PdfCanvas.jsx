@@ -1,63 +1,181 @@
-import React, { useEffect, useRef } from "react";
-import * as pdfjsLib from "pdfjs-dist";
-import useStore from "../store/annotations";
+// PdfCanvas.jsx
+import React, {
+  useRef,
+  useImperativeHandle,
+  useEffect,
+  useState,
+  forwardRef,
+} from "react";
+import * as pdfjs from "pdfjs-dist";
+import Tesseract from "tesseract.js";
 
-// configure worker (if using CDN you can point to worker)
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@5.4.394/build/pdf.worker.min.mjs`;
-// (version may vary — if offline, bundle the worker locally)
+// Correct worker for pdfjs v5.x
+import workerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
 
-export default function PdfCanvas() {
-  const canvasRef = useRef(null);
-  const { pdfUrl, page, scale, translate } = useStore();
-  const pdfRef = useRef(null);
+const PdfCanvas = forwardRef(
+  ({ pdfUrl, mode, onScanRegionSelected, onViewport }, ref) => {
+    const canvasRef = useRef(null);
+    const [page, setPage] = useState(null);
+    const [viewport, setViewport] = useState(null);
 
-  useEffect(() => {
-    if (!pdfUrl) return;
-    let canceled = false;
-    (async () => {
-      const loadingTask = pdfjsLib.getDocument(pdfUrl);
-      pdfRef.current = await loadingTask.promise;
-      if (canceled) return;
-      const pdf = pdfRef.current;
-      const p = await pdf.getPage(page);
-      const viewport = p.getViewport({ scale });
-      const canvas = canvasRef.current;
-      const context = canvas.getContext("2d");
+    const [dragging, setDragging] = useState(false);
+    const [start, setStart] = useState(null);
+    const [rect, setRect] = useState(null);
 
-      // set canvas size to viewport
-      canvas.width = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
+    // Load PDF once per URL
+    useEffect(() => {
+      let mounted = true;
 
-      // clear and render
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      const renderContext = {
-        canvasContext: context,
-        viewport,
+      (async () => {
+        const pdf = await pdfjs.getDocument(pdfUrl).promise;
+        const pg = await pdf.getPage(1);
+
+        if (!mounted) return;
+
+        const vp = pg.getViewport({ scale: 1 });
+        setPage(pg);
+        setViewport(vp);
+
+        if (onViewport) onViewport(vp); // notify wrapper once
+      })();
+
+      return () => {
+        mounted = false;
       };
-      await p.render(renderContext).promise;
-    })();
+    }, [pdfUrl]);
 
-    return () => {
-      canceled = true;
+    // Render PDF page only when page + viewport ready
+    useEffect(() => {
+      if (!page || !viewport) return;
+
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext("2d");
+
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+
+      let aborted = false;
+
+      page.render({ canvasContext: ctx, viewport }).promise.then(() => {
+        if (aborted) return;
+      });
+
+      return () => {
+        aborted = true;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      };
+    }, [page, viewport]);
+
+    // Expose scan API to wrapper
+    useImperativeHandle(ref, () => ({
+      scanRegion: async (region) => {
+        if (!canvasRef.current) return null;
+        const text = await extractOcr(
+          canvasRef.current,
+          normalizeRegion(region)
+        );
+        return text;
+      },
+    }));
+
+    // Correct OCR cropping
+    const extractOcr = async (canvas, region) => {
+      const temp = document.createElement("canvas");
+      temp.width = region.w;
+      temp.height = region.h;
+
+      const tctx = temp.getContext("2d");
+
+      tctx.drawImage(
+        canvas,
+        region.x,
+        region.y,
+        region.w,
+        region.h,
+        0,
+        0,
+        region.w,
+        region.h
+      );
+
+      const result = await Tesseract.recognize(temp, "eng");
+      return result.data.text;
     };
-  }, [pdfUrl, page, scale]);
 
-  // The canvas is absolutely positioned; transforms (translate & scale) applied by overlay sync.
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        position: "absolute",
-        left: 0,
-        top: 0,
-        transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
-        transformOrigin: "0 0",
-        touchAction: "none",
-        userSelect: "none",
-        willChange: "transform",
-      }}
-    />
-  );
-}
+    // Normalize negative drag direction
+    const normalizeRegion = (r) => ({
+      x: r.w < 0 ? r.x + r.w : r.x,
+      y: r.h < 0 ? r.y + r.h : r.y,
+      w: Math.abs(r.w),
+      h: Math.abs(r.h),
+    });
+
+    // Canvas mouse handlers
+    const onDown = (e) => {
+      if (mode !== "scan") return;
+
+      const bounds = canvasRef.current.getBoundingClientRect();
+      setStart({
+        x: e.clientX - bounds.left,
+        y: e.clientY - bounds.top,
+      });
+      setDragging(true);
+    };
+
+    const onMove = (e) => {
+      if (!dragging || mode !== "scan") return;
+
+      const bounds = canvasRef.current.getBoundingClientRect();
+      setRect({
+        x: start.x,
+        y: start.y,
+        w: e.clientX - bounds.left - start.x,
+        h: e.clientY - bounds.top - start.y,
+      });
+    };
+
+    const onUp = async () => {
+      if (!dragging) return;
+      setDragging(false);
+
+      if (rect) {
+        const r = normalizeRegion(rect);
+        const text = await extractOcr(canvasRef.current, r);
+        onScanRegionSelected?.({ rect: r, text });
+      }
+    };
+
+    return (
+      <div style={{ position: "relative" }}>
+        <canvas
+          ref={canvasRef}
+          style={{
+            pointerEvents: mode === "scan" ? "auto" : "none",
+            cursor: mode === "scan" ? "crosshair" : "default",
+          }}
+          onMouseDown={onDown}
+          onMouseMove={onMove}
+          onMouseUp={onUp}
+        />
+
+        {rect && mode === "scan" && (
+          <div
+            style={{
+              position: "absolute",
+              left: rect.x,
+              top: rect.y,
+              width: rect.w,
+              height: rect.h,
+              border: "2px dashed red",
+              background: "rgba(255,0,0,0.15)",
+              pointerEvents: "none",
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+);
+
+export default PdfCanvas;
