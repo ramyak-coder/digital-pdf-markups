@@ -1,76 +1,284 @@
-import React, { useState } from "react";
+// SvgOverlay.jsx
+import React from "react";
 
-export default function SvgOverlay({ width, height, mode }) {
-  const [shapes, setShapes] = useState([]);
-  const [current, setCurrent] = useState(null);
+export default function SvgOverlay({
+  width,
+  height,
+  mode,
+  tool,
+  objects = [],
+  onChangeObjects,
+  onRequestScanCallout,
+}) {
+  const svgRef = React.useRef(null);
+  const drawingRef = React.useRef(null);
 
+  //--------------------------------------
+  // Utility: convert mouse to SVG coords
+  //--------------------------------------
+  const getSvgPoint = (e) => {
+    const svg = svgRef.current;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  };
+
+  //--------------------------------------
+  // Safe state updates
+  //--------------------------------------
+  const appendObject = (obj) => {
+    onChangeObjects((prev) => {
+      if (prev.some((o) => o.id === obj.id)) return prev; // avoid duplicates
+      return [...prev, obj];
+    });
+  };
+
+  const updateObject = (updated) => {
+    onChangeObjects((prev) =>
+      prev.map((o) => (o.id === updated.id ? updated : o))
+    );
+  };
+
+  //--------------------------------------
+  // Mouse Handlers
+  //--------------------------------------
   const handleMouseDown = (e) => {
-    const rect = e.target.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    setCurrent({ x, y, width: 0, height: 0 });
-    console.log("mouseDown");
+    if (mode !== "markup") return;
+
+    const p = getSvgPoint(e);
+
+    // Clear stale
+    drawingRef.current = null;
+
+    if (tool === "pen") {
+      const id = crypto.randomUUID();
+      const obj = { id, type: "pen", points: [{ x: p.x, y: p.y }] };
+      drawingRef.current = obj;
+      appendObject(obj);
+      return;
+    }
+
+    if (tool === "rect") {
+      const id = crypto.randomUUID();
+      const obj = { id, type: "rect", x: p.x, y: p.y, w: 0, h: 0 };
+      drawingRef.current = obj;
+      appendObject(obj);
+      return;
+    }
+
+    if (tool === "text") {
+      const id = crypto.randomUUID();
+      appendObject({ id, type: "text", x: p.x, y: p.y, text: "" });
+      return;
+    }
+
+    if (tool === "callout") {
+      const id = crypto.randomUUID();
+      appendObject({
+        id,
+        type: "callout",
+        point: { x: p.x, y: p.y },
+        boxX: p.x + 40,
+        boxY: p.y - 30,
+        text: "",
+      });
+      return;
+    }
+
+    if (tool === "eraser") {
+      onChangeObjects((prev) =>
+        prev.filter((o) => {
+          if (o.type === "rect") {
+            const rx = Math.min(o.x, o.x + o.w);
+            const ry = Math.min(o.y, o.y + o.h);
+            const rw = Math.abs(o.w);
+            const rh = Math.abs(o.h);
+            return !(
+              p.x >= rx &&
+              p.x <= rx + rw &&
+              p.y >= ry &&
+              p.y <= ry + rh
+            );
+          }
+          if (o.type === "callout") {
+            const dx = p.x - o.point.x;
+            const dy = p.y - o.point.y;
+            return Math.sqrt(dx * dx + dy * dy) > 10;
+          }
+          return true;
+        })
+      );
+    }
   };
 
   const handleMouseMove = (e) => {
-    if (!current) return;
-    const rect = e.target.getBoundingClientRect();
-    const width = e.clientX - rect.left - current.x;
-    const height = e.clientY - rect.top - current.y;
-    setCurrent({ ...current, width, height });
-    console.log("mouseMove");
+    if (mode !== "markup") return;
+
+    const obj = drawingRef.current;
+    if (!obj) return;
+
+    const p = getSvgPoint(e);
+
+    if (obj.type === "pen") {
+      const updated = {
+        ...obj,
+        points: [...obj.points, { x: p.x, y: p.y }],
+      };
+      drawingRef.current = updated;
+      updateObject(updated);
+      return;
+    }
+
+    if (obj.type === "rect") {
+      const updated = {
+        ...obj,
+        w: p.x - obj.x,
+        h: p.y - obj.y,
+      };
+      drawingRef.current = updated;
+      updateObject(updated);
+      return;
+    }
   };
 
   const handleMouseUp = () => {
-    if (
-      current &&
-      Math.abs(current.width) > 5 &&
-      Math.abs(current.height) > 5
-    ) {
-      setShapes([...shapes, current]);
-    }
-    setCurrent(null);
-    console.log("mouseUp");
+    drawingRef.current = null;
   };
 
+  //--------------------------------------
+  // Render helpers
+  //--------------------------------------
+  const renderObject = (o) => {
+    if (o.type === "pen") {
+      const pts = o.points.map((p) => `${p.x},${p.y}`).join(" ");
+      return (
+        <polyline
+          key={o.id}
+          points={pts}
+          stroke="red"
+          strokeWidth={2}
+          fill="none"
+        />
+      );
+    }
+
+    if (o.type === "rect") {
+      const x = Math.min(o.x, o.x + o.w);
+      const y = Math.min(o.y, o.y + o.h);
+      return (
+        <rect
+          key={o.id}
+          x={x}
+          y={y}
+          width={Math.abs(o.w)}
+          height={Math.abs(o.h)}
+          stroke="blue"
+          strokeWidth={2}
+          fill="rgba(0,0,255,0.1)"
+        />
+      );
+    }
+
+    if (o.type === "text") {
+      return (
+        <foreignObject key={o.id} x={o.x} y={o.y} width={200} height={60}>
+          <textarea
+            value={o.text}
+            onChange={(ev) => {
+              const val = ev.target.value;
+              onChangeObjects((prev) =>
+                prev.map((p) => (p.id === o.id ? { ...p, text: val } : p))
+              );
+            }}
+            style={{
+              width: "200px",
+              height: "60px",
+              fontSize: 14,
+              background: "rgba(255,255,255,0.95)",
+            }}
+          />
+        </foreignObject>
+      );
+    }
+
+    if (o.type === "callout") {
+      return (
+        <g key={o.id}>
+          <line
+            x1={o.point.x}
+            y1={o.point.y}
+            x2={o.boxX}
+            y2={o.boxY}
+            stroke="red"
+            strokeWidth={2}
+          />
+          <foreignObject x={o.boxX} y={o.boxY} width={180} height={60}>
+            <div style={{ display: "flex", gap: 6 }}>
+              <textarea
+                value={o.text}
+                onChange={(ev) => {
+                  const val = ev.target.value;
+                  onChangeObjects((prev) =>
+                    prev.map((p) => (p.id === o.id ? { ...p, text: val } : p))
+                  );
+                }}
+                style={{
+                  width: "130px",
+                  height: "56px",
+                  fontSize: 14,
+                  background: "rgba(255,255,255,0.95)",
+                }}
+              />
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <button
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    onRequestScanCallout?.(o);
+                  }}
+                >
+                  🔎
+                </button>
+                <button
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    onChangeObjects((prev) =>
+                      prev.filter((p) => p.id !== o.id)
+                    );
+                  }}
+                >
+                  🗑
+                </button>
+              </div>
+            </div>
+          </foreignObject>
+        </g>
+      );
+    }
+
+    return null;
+  };
+
+  //--------------------------------------
+  // FINAL SVG
+  //--------------------------------------
   return (
     <svg
+      ref={svgRef}
       width={width}
       height={height}
       style={{
         position: "absolute",
-        top: 0,
         left: 0,
+        top: 0,
         pointerEvents: mode === "markup" ? "auto" : "none",
-        cursor: "crosshair",
+        zIndex: 10,
       }}
-      onMouseDown={mode === "markup" ? handleMouseDown : undefined}
-      onMouseMove={mode === "markup" ? handleMouseMove : undefined}
-      onMouseUp={mode === "markup" ? handleMouseUp : undefined}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
     >
-      {shapes.map((r, i) => (
-        <rect
-          key={i}
-          x={Math.min(r.x, r.x + r.width)}
-          y={Math.min(r.y, r.y + r.height)}
-          width={Math.abs(r.width)}
-          height={Math.abs(r.height)}
-          fill="rgba(255, 0, 0, 0.2)"
-          stroke="red"
-          strokeWidth="2"
-        />
-      ))}
-      {current && (
-        <rect
-          x={Math.min(current.x, current.x + current.width)}
-          y={Math.min(current.y, current.y + current.height)}
-          width={Math.abs(current.width)}
-          height={Math.abs(current.height)}
-          fill="rgba(0, 0, 255, 0.15)"
-          stroke="blue"
-          strokeWidth="2"
-        />
-      )}
+      {objects.map((o) => renderObject(o))}
     </svg>
   );
 }
