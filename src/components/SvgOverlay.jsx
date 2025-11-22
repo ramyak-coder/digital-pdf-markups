@@ -206,11 +206,11 @@ export default function SvgOverlay({
             y1={o.point.y}
             x2={o.boxX}
             y2={o.boxY}
-            stroke="red"
+            stroke="blue"
             strokeWidth={2}
           />
-          <foreignObject x={o.boxX} y={o.boxY} width={180} height={60}>
-            <div style={{ display: "flex", gap: 6 }}>
+          <foreignObject x={o.boxX} y={o.boxY} width={180} height={100}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, }}>
               <textarea
                 value={o.text}
                 onChange={(ev) => {
@@ -224,9 +224,10 @@ export default function SvgOverlay({
                   height: "56px",
                   fontSize: 14,
                   background: "rgba(255,255,255,0.95)",
+                  border: "2px solid blue",
                 }}
               />
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", flexDirection: "row", gap: 6 }}>
                 {/* <button
                   onClick={(ev) => {
                     ev.stopPropagation();
@@ -236,6 +237,7 @@ export default function SvgOverlay({
                   🔎
                 </button> */}
                 <button
+                  style={{ border: "2px solid red", color: "red"}}
                   onClick={(ev) => {
                     ev.stopPropagation();
                     onChangeObjects((prev) =>
