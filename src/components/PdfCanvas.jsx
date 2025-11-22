@@ -81,13 +81,17 @@ const PdfCanvas = forwardRef(
 
     // Correct OCR cropping
     const extractOcr = async (canvas, region) => {
+      // --- 1. upscale for better OCR ---
+      const scale = 2;
+
       const temp = document.createElement("canvas");
-      temp.width = region.w;
-      temp.height = region.h;
+      temp.width = region.w * scale;
+      temp.height = region.h * scale;
 
-      const tctx = temp.getContext("2d");
+      const ctx = temp.getContext("2d");
 
-      tctx.drawImage(
+      // --- 2. copy region → scaled canvas ---
+      ctx.drawImage(
         canvas,
         region.x,
         region.y,
@@ -95,13 +99,30 @@ const PdfCanvas = forwardRef(
         region.h,
         0,
         0,
-        region.w,
-        region.h
+        temp.width,
+        temp.height
       );
 
-      const result = await Tesseract.recognize(temp, "eng");
-      return result.data.text;
+      // --- 3. convert to blob (this is critical) ---
+      const blob = await new Promise((resolve) =>
+        temp.toBlob(resolve, "image/png")
+      );
+
+      if (!blob) {
+        console.error("OCR: Failed to create blob");
+        return "";
+      }
+
+      // --- 4. run tesseract properly ---
+      // const result = await Tesseract.recognize(blob, "eng", {
+      //   logger: (m) => console.log("[OCR]", m),
+      // });
+
+      const result = await Tesseract.recognize(blob, "eng",);
+
+      return result.data.text.trim();
     };
+
 
     // Normalize negative drag direction
     const normalizeRegion = (r) => ({
